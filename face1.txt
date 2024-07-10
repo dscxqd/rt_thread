@@ -1,0 +1,66 @@
+import sensor, image, time, os, tf, math, uos, gc, pyb, lcd
+
+# Initialize the camera sensor
+sensor.reset()
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.QVGA)
+sensor.set_windowing((240, 240))  # Assuming LCD resolution matches this
+sensor.skip_frames(time=2000)
+
+# Initialize UART
+uart = pyb.UART(3, 9600)
+uart.init(9600, bits=8, parity=None, stop=2)
+
+# Load the model and labels
+try:
+    net = tf.load("trained.tflite", load_to_fb=uos.stat('trained.tflite')[6] < (gc.mem_free() - (64*1024)))  # Corrected condition
+except Exception as e:
+    raise Exception(f'Failed to load "trained.tflite": {e}')
+
+try:
+    with open("labels.txt", 'r') as f:
+        labels = [line.strip() for line in f]
+except Exception as e:
+    raise Exception(f'Failed to load "labels.txt": {e}')
+
+# Define colors for drawing bounding boxes
+colors = [(255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255)]
+
+# Initialize LCD (assuming the correct initialization parameters for your LCD)
+lcd.init()
+
+clock = time.clock()
+
+while True:
+    clock.tick()
+
+    # Capture an image and display it immediately
+    img = sensor.snapshot()
+    lcd.display(img)
+
+    face_detected = False
+
+    # Perform object detection
+    for i, detection_list in enumerate(net.detect(img, thresholds=[(math.ceil(min_confidence * 255), 255)])):
+        if i == 0 or not detection_list:  # Skip background and empty detections
+            continue
+
+        label = labels[i]
+        if label == "yankai":  # Assuming "yankai" is your label for faces
+            face_detected = True
+            print("Face detected!")
+            uart.write("1")  # Send signal when a face is detected
+
+        print(f"********** {label} **********")
+        for d in detection_list:
+            x, y, w, h = d.rect()
+            center_x = x + w // 2
+            center_y = y + h // 2
+            print(f'x {center_x}\ty {center_y}')
+            img.draw_circle((center_x, center_y), 12, color=colors[i % len(colors)], thickness=2)  # Ensure index within color list bounds
+
+    if not face_detected:
+        print("No face detected.")
+
+    # Print FPS at the end of each iteration
+    print(f"{clock.fps()} fps", end="\n\n")

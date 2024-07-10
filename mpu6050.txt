@@ -1,0 +1,47 @@
+#include <MPU6050_tockn.h>
+#include <Servo.h>
+Servo duo1;
+Servo duo2;
+float y,x;
+MPU6050 mpu6050(Wire);
+float tar=0,curren_err,last_err,pre_err,leijia;
+ 
+int pid1(int a,int b){
+  float kp=0.68,ki=0.002,kd=0.3;
+  float pwm;
+  a= map(a,-45,45,0,180);
+  curren_err = a-b;
+  
+  leijia+=curren_err;
+  if(leijia>5)leijia=5;
+  if(leijia<-5)leijia=-5;
+  pwm = kp*curren_err+ki*leijia+kd*(curren_err-last_err);
+  last_err = curren_err;
+  return pwm;
+}
+ 
+void setup() {
+  // put your setup code here, to run once:
+duo1.attach(3);
+duo2.attach(9);
+  Serial.begin(9600);
+  Wire.begin();
+  mpu6050.begin();
+  mpu6050.calcGyroOffsets(true);
+ 
+}
+ 
+void loop() {
+  // put your main code here, to run repeatedly:
+  mpu6050.update();
+  //Serial.print(mpu6050.getAngleY());
+  Serial.print(" ");
+  //Serial.println(mpu6050.getAngleX());
+  y=mpu6050.getAngleY();
+  x=mpu6050.getAngleX();
+duo1.write(pid1(y,tar));
+duo2.write(pid1(x,tar));
+ Serial.print(pid1(y,tar));
+ Serial.print(" ");
+ Serial.println(pid1(x,tar));
+}

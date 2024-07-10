@@ -1,0 +1,63 @@
+import sensor,image,time,math,pyb,lcd
+from pyb import UART,LED
+import json
+import ustruct
+lcd.init()
+sensor.reset()
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.QQVGA)#QQVGA的分辨率为120*160
+sensor.skip_frames(time = 2000)
+sensor.set_auto_gain(False) # 关闭自动增益
+sensor.set_auto_whitebal(False) #关闭白平衡
+
+red_threshold_01=(18, 56, 103, 35, -57, 116)
+clock = time.clock()
+
+uart = UART(2,9600)   #定义串口2变量
+uart.init(9600, bits=8, parity=None, stop=1) # init with given parameters
+
+def find_max(blobs):    #定义寻找色块面积最大的函数
+    max_size=0
+    for blob in blobs:
+        if blob.pixels() > max_size:
+            max_blob = blob
+            max_size = blob.pixels()
+    return max_blob
+
+
+def sending_data(cx,cy,cw,ch):
+    global uart;
+    data = ustruct.pack("<bbhhhhb",      #格式为俩个字符俩个短整型(2字节)
+                   0x2C,                      #帧头1
+                   0x12,                      #帧头2
+                   int(cx), # up sample by 4   #数据1
+                   int(cy), # up sample by 4    #数据2
+                   int(cw), # up sample by 4    #数据1
+                   int(ch), # up sample by 4    #数据2
+                   0x5B)
+    uart.write(data);   #必须要传入一个字节数组
+
+led = pyb.LED(3)
+while(True):
+    led.on()
+    clock.tick()
+    img = sensor.snapshot()
+    blobs = img.find_blobs([red_threshold_01])
+    if blobs:
+        max_b = find_max(blobs)
+        cx=max_b[5]
+        cy=max_b[6]
+        cw=max_b[2]
+        ch=max_b[3]
+        img.draw_rectangle(max_b.rect(),color=(255,0,0)) # rect
+        img.draw_cross(max_b[5], max_b[6]) # cx, cy
+        FH = bytearray([0x2C,0x12,int(cx),int(cy),int(cw),int(ch),0x5B])
+        uart.write(FH)
+        print(cx,cy,cw,ch)
+        lcd.display(img)
+    else:
+        FH = bytearray([0x2C,0x12,0,0,0,0,0x5B])
+        uart.write(FH)
+        img.draw_string(0,0,"no object",color = (120,0,0))
+        lcd.display(img)
+

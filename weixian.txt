@@ -1,0 +1,73 @@
+import sensor, image, time, lcd, pyb
+
+# 初始化摄像头
+sensor.reset()
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.QVGA)
+sensor.skip_frames(time = 2000)
+
+# 初始化LCD
+lcd.init()
+
+# 初始化串口通信
+uart = pyb.UART(2, 115200) # UART 3, and baudrate.
+
+# 矩形框的位置和大小
+rect_x = 60
+rect_y = 30
+rect_w = 200
+rect_h = 200
+
+# 红色小球的颜色阈值（可能需要调整）
+red_threshold = (17, 44, 127, 3, -128, 127)
+
+# 上次发送时间
+last_send_time = 0
+# 发送间隔（2秒）
+send_interval = 2
+
+while(True):
+    img = sensor.snapshot()
+
+    # 检测红色小球
+    blobs = img.find_blobs([red_threshold], pixels_threshold=10, area_threshold=10, merge=True)
+
+    # 矩形框的默认颜色（绿色）
+    rect_color = (0, 255, 0)
+    ball_detected = False
+
+    # 检查是否有红色小球进入矩形框区域
+    for blob in blobs:
+        if (blob.x() < rect_x + rect_w and blob.x() + blob.w() > rect_x and
+            blob.y() < rect_y + rect_h and blob.y() + blob.h() > rect_y):
+            # 如果红色小球与矩形框相交，将矩形框颜色改为红色
+            rect_color = (255, 0, 0)
+            ball_detected = True
+            break
+
+    # 在图像上绘制矩形框
+    img.draw_rectangle(rect_x, rect_y, rect_w, rect_h, color=rect_color, thickness=2)
+
+    # 在LCD上显示图像
+    lcd.display(img)
+
+    # 获取当前时间
+    current_time = time.time()
+
+    # 如果检测到红色小球，并且距离上次发送已经超过2秒
+    if ball_detected and (current_time - last_send_time) >= send_interval:
+        uart.write('1')
+        last_send_time = current_time  # 更新上次发送时间
+
+
+
+
+
+
+
+
+
+
+
+
+

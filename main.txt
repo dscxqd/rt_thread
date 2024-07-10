@@ -1,0 +1,314 @@
+
+#include <rtthread.h>
+#include <rtdevice.h>
+#include <board.h>
+#include "aht10.h"
+#include <drv_matrix_led.h>
+
+#define DBG_TAG "main"
+#define DBG_LVL DBG_LOG
+#include <rtdbg.h>
+#define THREAD_PRIORITY         25      // 线程优先级
+#define THREAD_STACK_SIZE       512     // 线程堆栈大小
+#define THREAD_TIMESLICE        5       // 线程时间片
+
+#define PWM_DEV_NAME        "pwm1"      /* PWM设备名称 */
+#define PWM_DEV_CHANNEL     4           /* PWM通道 */
+
+static rt_thread_t tid1 = RT_NULL;
+struct rt_device_pwm *pwm_dev;          /* PWM设备句柄 */
+
+/* 舵机控制的周期和脉冲宽度 */
+rt_uint32_t      period = 20000000,     /* 周期为20ms，单位为纳秒ns */
+                 pulse = 1500000,       /* 初始脉冲宽度为1.5ms，单位为纳秒ns */
+                 dir = 1;               /* 脉冲宽度值的增减方向 */
+
+#define PIN_KEY1        GET_PIN(C, 1)
+#define PIN_WK_UP       GET_PIN(C, 5)
+#define PIN_BEEP        GET_PIN(B, 0)
+
+
+enum{
+    EXTERN_LED_0,
+    EXTERN_LED_1,
+    EXTERN_LED_2,
+    EXTERN_LED_3,
+    EXTERN_LED_4,
+    EXTERN_LED_5,
+    EXTERN_LED_6,
+    EXTERN_LED_7,
+    EXTERN_LED_8,
+    EXTERN_LED_9,
+    EXTERN_LED_10,
+    EXTERN_LED_11,
+    EXTERN_LED_12,
+    EXTERN_LED_13,
+    EXTERN_LED_14,
+    EXTERN_LED_15,
+    EXTERN_LED_16,
+    EXTERN_LED_17,
+    EXTERN_LED_18,
+};
+
+void irq_callback(void *args)
+{
+    rt_uint32_t sign = (rt_uint32_t) args;
+    switch (sign)
+    {
+    case PIN_WK_UP :
+        //rt_pin_write(PIN_BEEP,PIN_HIGH);
+      //  LOG_D("WK_UP interrupt. beep on.");
+        break;
+    case PIN_KEY1 :
+        //rt_pin_write(PIN_BEEP,PIN_LOW);
+     //   LOG_D("KEY1 interrupt. beep off.");
+        break;
+    default:
+    //    LOG_E("error sign= %d !", sign);
+        break;
+    }
+}
+float temperature;
+float humidity;
+int main(void)
+{
+
+
+    aht10_device_t dev;
+    const char *i2c_bus_name = "i2c3";
+    int count = 0;
+
+    rt_thread_mdelay(2000);
+
+    dev = aht10_init(i2c_bus_name);
+    if (dev == RT_NULL)
+    {
+      //  LOG_E(" The sensor initializes failure");
+        return 0;
+    }
+
+    rt_pin_mode(PIN_KEY1, PIN_MODE_INPUT_PULLUP);
+    rt_pin_mode(PIN_WK_UP, PIN_MODE_INPUT_PULLUP);
+    rt_pin_mode(PIN_BEEP, PIN_MODE_OUTPUT);
+
+    rt_pin_attach_irq(PIN_KEY1, PIN_IRQ_MODE_FALLING, irq_callback, (void *) PIN_KEY1);
+    rt_pin_attach_irq(PIN_WK_UP, PIN_IRQ_MODE_FALLING, irq_callback, (void *) PIN_WK_UP);
+
+    rt_pin_irq_enable(PIN_KEY1, PIN_IRQ_ENABLE);
+    rt_pin_irq_enable(PIN_WK_UP, PIN_IRQ_ENABLE);
+
+
+    while (1)
+    {
+        humidity=aht10_read_humidity(dev);
+        temperature = aht10_read_temperature(dev);
+       // LOG_D("temperature: %d.%d", (int)temperature, (int)(temperature * 10) % 10);
+
+        if (temperature > 32.0)
+        {
+            rt_pin_write(PIN_BEEP, PIN_HIGH);
+          //  LOG_D("Temperature above 30. Beep on.");
+            for (int i = EXTERN_LED_0; i <= EXTERN_LED_18; i++)
+            {
+                led_matrix_set_color(i, RED);
+            }
+            led_matrix_reflash();
+            rt_thread_mdelay(500);
+            for (int i = EXTERN_LED_0; i <= EXTERN_LED_18; i++)
+            {
+                led_matrix_set_color(i, WHITE);
+            }
+            led_matrix_reflash();
+            rt_thread_mdelay(500);
+        }
+        else
+        {
+            rt_pin_write(PIN_BEEP, PIN_LOW);
+        //    LOG_D("Temperature below or equal 30. Beep off.");
+            for (int i = EXTERN_LED_0; i <= EXTERN_LED_18; i++)
+            {
+                led_matrix_set_color(i, GREEN);
+            }
+            led_matrix_reflash();
+            rt_thread_mdelay(1000);
+        }
+    }
+    return 0;
+}
+/*
+ * 程序清单：这是一个 串口 设备使用例程
+ * 例程导出了 uart_sample 命令到控制终端
+ * 命令调用格式：uart_sample uart2
+ * 命令解释：命令第二个参数是要使用的串口设备名称，为空则使用默认的串口设备
+ * 程序功能：通过串口输出字符串"hello RT-Thread!"，然后错位输出输入的字符
+*/
+
+#include <rtthread.h>
+
+#define SAMPLE_UART_NAME       "uart2"
+
+/* 用于接收消息的信号量 */
+static struct rt_semaphore rx_sem;
+static rt_device_t serial;
+
+/* 接收数据回调函数 */
+static rt_err_t uart_input(rt_device_t dev, rt_size_t size)
+{
+    /* 串口接收到数据后产生中断，调用此回调函数，然后发送接收信号量 */
+    rt_sem_release(&rx_sem);
+
+    return RT_EOK;
+}
+
+static void serial_thread_entry(void *parameter)
+{
+    char ch;
+
+    while (1)
+    {
+        // Wait for a byte to be received
+        while (rt_device_read(serial, -1, &ch, 1) != 1)
+        {
+            rt_sem_take(&rx_sem, RT_WAITING_FOREVER);
+        }
+
+        // Check if the received byte is '1'
+        if (ch == '1')
+        {
+            // Turn on the buzzer
+            rt_pin_write(PIN_BEEP, PIN_HIGH);
+            rt_thread_mdelay(100); // Beep duration
+            rt_pin_write(PIN_BEEP, PIN_LOW);
+
+            // Flash the red light
+            for (int i = EXTERN_LED_0; i <= EXTERN_LED_18; i++)
+            {
+                led_matrix_set_color(i, BLUE);
+            }
+            led_matrix_reflash();
+            rt_thread_mdelay(1000); // Red light duration
+            for (int i = EXTERN_LED_0; i <= EXTERN_LED_18; i++)
+            {
+                led_matrix_set_color(i,WHITE); // Assuming OFF is defined for turning off the LED
+            }
+            led_matrix_reflash();
+            rt_thread_mdelay(500); // Red light duration
+
+            // Control the servo to move
+            pulse = 1500000; // Set pulse for middle position as an example
+            rt_pwm_set(pwm_dev, PWM_DEV_CHANNEL, period, pulse);
+        }
+        else
+        {
+            // Handle other data as before
+            ch = ch + 1;
+            rt_device_write(serial, 0, &ch, 1);
+        }
+    }
+} 
+
+static int uart_sample(int argc, char *argv[])
+{
+    rt_err_t ret = RT_EOK;
+    char uart_name[RT_NAME_MAX];
+    char str[] = "hello RT-Thread!\r\n";
+
+    if (argc == 2)
+    {
+        rt_strncpy(uart_name, argv[1], RT_NAME_MAX);
+    }
+    else
+    {
+        rt_strncpy(uart_name, SAMPLE_UART_NAME, RT_NAME_MAX);
+    }
+
+    /* 查找系统中的串口设备 */
+    serial = rt_device_find(uart_name);
+    if (!serial)
+    {
+        rt_kprintf("find %s failed!\n", uart_name);
+        return RT_ERROR;
+    }
+
+    /* 初始化信号量 */
+    rt_sem_init(&rx_sem, "rx_sem", 0, RT_IPC_FLAG_FIFO);
+    /* 以中断接收及轮询发送模式打开串口设备 */
+    rt_device_open(serial, RT_DEVICE_FLAG_INT_RX);
+    /* 设置接收回调函数 */
+    rt_device_set_rx_indicate(serial, uart_input);
+    /* 发送字符串 */
+    rt_device_write(serial, 0, str, (sizeof(str) - 1));
+
+    /* 创建 serial 线程 */
+    rt_thread_t thread = rt_thread_create("serial", serial_thread_entry, RT_NULL, 1024, 25, 10);
+    /* 创建成功则启动线程 */
+    if (thread != RT_NULL)
+    {
+        rt_thread_startup(thread);
+    }
+    else
+    {
+        ret = RT_ERROR;
+    }
+
+    return ret;
+}
+
+
+/* 导出到 msh 命令列表中 */
+MSH_CMD_EXPORT(uart_sample, uart device sample);
+
+static void servo_control_entry(void *parameter)
+{
+    while (1)
+    {
+        rt_thread_mdelay(1000); // 每1秒调整一次角度
+
+        if (dir)
+        {
+            pulse += 1000000; // 每次增加100000ns（0.1ms），增加角度
+        }
+        else
+        {
+            pulse -= 1000000; // 每次减少100000ns（0.1ms），减少角度
+        }
+
+        if (pulse >= 2200000) // 2.2ms对应最大角度
+        {
+            dir = 0; // 到达最大角度，改变方向
+        }
+        else if (pulse <= 800000) // 0.8ms对应最小角度
+        {
+            dir = 1; // 到达最小角度，改变方向
+        }
+
+        /* 设置PWM周期和脉冲宽度来控制舵机 */
+        rt_pwm_set(pwm_dev, PWM_DEV_CHANNEL, period, pulse);
+    }
+}
+
+/* 线程示例 */
+int thread_pwm_led(void)
+{
+    /* 查找设备 */
+    pwm_dev = (struct rt_device_pwm *)rt_device_find(PWM_DEV_NAME);
+    if (pwm_dev == RT_NULL)
+    {
+        rt_kprintf("pwm sample run failed! can't find %s device!\n", PWM_DEV_NAME);
+        return RT_ERROR;
+    }
+    /* 设置PWM周期和脉冲宽度默认值 */
+    rt_pwm_set(pwm_dev, PWM_DEV_CHANNEL, period, pulse);
+    /* 使能设备 */
+    rt_pwm_enable(pwm_dev, PWM_DEV_CHANNEL);
+    tid1 = rt_thread_create("servo_ctrl",
+                            servo_control_entry, RT_NULL,
+                            THREAD_STACK_SIZE,
+                            THREAD_PRIORITY, THREAD_TIMESLICE);
+    /* 如果获得线程控制块，启动这个线程 */
+    if (tid1 != RT_NULL)
+        rt_thread_startup(tid1);
+    return 0;
+}
+/* 导出到 msh 命令列表中 */
+MSH_CMD_EXPORT(thread_pwm_led, pwm sample);
